@@ -35,6 +35,7 @@ env_logger = "0.11"
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
+async-std = { version = "1.12.0", features = ["wasm-bindgen-futures"] }
 
 # to access the DOM (to hide the loading text)
 [target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]

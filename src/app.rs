@@ -4,9 +4,17 @@ use dirs::{download_dir, home_dir, picture_dir};
 use egui_notify::Toasts;
 use files::ImageFile;
 use image::ImageFormat;
+#[cfg(target_arch = "wasm32")]
+use rfd::AsyncFileDialog;
+#[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 mod files;
+#[cfg(target_arch = "wasm32")]
+mod files_wasm;
+#[cfg(target_arch = "wasm32")]
+use files_wasm as files;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(Default, Deserialize, Serialize)]
@@ -72,37 +80,7 @@ impl eframe::App for TemplateApp {
             ui.separator();
 
             ui.label("Input file:");
-            ui.horizontal(|ui| {
-                if ui.button("Browse").clicked() {
-                    if let Some(path) = FileDialog::new()
-                        .set_title("Input image")
-                        .set_directory(working_dir())
-                        .add_filter(
-                            "images",
-                            &ImageFormat::all()
-                                .map(ImageFormat::extensions_str)
-                                .flatten()
-                                .collect::<Vec<&'static &'static str>>(),
-                        )
-                        .pick_file()
-                    {
-                        match ImageFile::try_new(&path) {
-                            Ok(file) => {
-                                self.files[0] = Some(file);
-                            }
-                            Err(e) => {
-                                self.toasts.error(e.to_string());
-                            }
-                        }
-                    }
-                }
-                ui.label(
-                    self.files[0]
-                        .clone()
-                        .map(|file| file.display().to_string())
-                        .unwrap_or_default(),
-                );
-            });
+            self.browse(ui);
 
             ui.horizontal(|ui| {
                 if ui.button("Alert").clicked() {
@@ -144,4 +122,77 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
         );
         ui.label(".");
     });
+}
+
+impl TemplateApp {
+    #[cfg(target_arch = "wasm32")]
+    fn browse(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("Browse").clicked() {
+                if let Some(path) = async_std::task::block_on(async {
+                    AsyncFileDialog::new()
+                        .set_title("Input image")
+                        .set_directory(working_dir())
+                        .add_filter(
+                            "images",
+                            &ImageFormat::all()
+                                .map(ImageFormat::extensions_str)
+                                .flatten()
+                                .collect::<Vec<&'static &'static str>>(),
+                        )
+                        .pick_file()
+                        .await
+                }) {
+                    match ImageFile::try_new(&path) {
+                        Ok(file) => {
+                            self.files[0] = Some(file);
+                        }
+                        Err(e) => {
+                            self.toasts.error(e.to_string());
+                        }
+                    }
+                }
+            }
+            ui.label(
+                self.files[0]
+                    .clone()
+                    .map(|file| file.to_string())
+                    .unwrap_or_default(),
+            );
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn browse(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("Browse").clicked() {
+                if let Some(path) = FileDialog::new()
+                    .set_title("Input image")
+                    .set_directory(working_dir())
+                    .add_filter(
+                        "images",
+                        &ImageFormat::all()
+                            .map(ImageFormat::extensions_str)
+                            .flatten()
+                            .collect::<Vec<&'static &'static str>>(),
+                    )
+                    .pick_file()
+                {
+                    match ImageFile::try_new(&path) {
+                        Ok(file) => {
+                            self.files[0] = Some(file);
+                        }
+                        Err(e) => {
+                            self.toasts.error(e.to_string());
+                        }
+                    }
+                }
+            }
+            ui.label(
+                self.files[0]
+                    .clone()
+                    .map(|file| file.display().to_string())
+                    .unwrap_or_default(),
+            );
+        });
+    }
 }
