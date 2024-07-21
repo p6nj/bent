@@ -1,27 +1,21 @@
+use std::path::PathBuf;
+
+use dirs::{download_dir, home_dir, picture_dir};
 use egui_notify::Toasts;
+use files::ImageFile;
+use image::ImageFormat;
+use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
+mod files;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
-    // Example stuff:
-    label: String,
+    files: [Option<ImageFile>; 2],
 
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
     #[serde(skip)]
     toasts: Toasts,
-}
-
-impl Default for TemplateApp {
-    fn default() -> Self {
-        Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
-            toasts: Default::default(),
-        }
-    }
 }
 
 impl TemplateApp {
@@ -29,6 +23,7 @@ impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+        cc.egui_ctx.set_zoom_factor(1.1);
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
@@ -51,40 +46,65 @@ impl eframe::App for TemplateApp {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
+        // egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        //     // The top panel is often a good place for a menu bar:
 
-            egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
-
-                egui::widgets::global_dark_light_mode_buttons(ui);
-            });
-        });
+        //     egui::menu::bar(ui, |ui| {
+        //         // NOTE: no File->Quit on web pages!
+        //         if cfg!(not(target_arch = "wasm32")) {
+        //             ui.menu_button("File", |ui| {
+        //                 if ui.button("Quit").clicked() {
+        //                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        //                 }
+        //             });
+        //             ui.add_space(16.0);
+        //         }
+        //         ui.with_layout(
+        //             egui::Layout::right_to_left(egui::Align::Center),
+        //             egui::widgets::global_dark_light_mode_buttons,
+        //         )
+        //     });
+        // });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
+            ui.heading("Bent");
+            ui.separator();
 
+            ui.label("Input file:");
             ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
+                if ui.button("Browse").clicked() {
+                    if let Some(path) = FileDialog::new()
+                        .set_title("Input image")
+                        .set_directory(working_dir())
+                        .add_filter(
+                            "images",
+                            &ImageFormat::all()
+                                .map(ImageFormat::extensions_str)
+                                .flatten()
+                                .collect::<Vec<&'static &'static str>>(),
+                        )
+                        .pick_file()
+                    {
+                        match ImageFile::try_new(&path) {
+                            Ok(file) => {
+                                self.files[0] = Some(file);
+                            }
+                            Err(e) => {
+                                self.toasts.error(e.to_string());
+                            }
+                        }
+                    }
+                }
+                ui.label(
+                    self.files[0]
+                        .clone()
+                        .map(|file| file.display().to_string())
+                        .unwrap_or_default(),
+                );
             });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-
             ui.horizontal(|ui| {
-                if ui.button("Increment").clicked() {
-                    self.value += 1.0;
-                }
                 if ui.button("Alert").clicked() {
                     self.toasts.warning("Warning!");
                 }
@@ -103,6 +123,13 @@ impl eframe::App for TemplateApp {
         });
         self.toasts.show(ctx);
     }
+}
+
+fn working_dir() -> PathBuf {
+    picture_dir()
+        .or(download_dir())
+        .or(home_dir())
+        .unwrap_or("/".into())
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
