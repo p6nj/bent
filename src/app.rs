@@ -4,10 +4,6 @@ use dirs::{download_dir, home_dir, picture_dir};
 use egui_notify::Toasts;
 use files::ImageFile;
 use image::ImageFormat;
-#[cfg(target_arch = "wasm32")]
-use rfd::AsyncFileDialog;
-#[cfg(not(target_arch = "wasm32"))]
-use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
@@ -127,22 +123,30 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 impl TemplateApp {
     #[cfg(target_arch = "wasm32")]
     fn browse(&mut self, ui: &mut egui::Ui) {
+        use std::sync::mpsc;
+
+        use rfd::AsyncFileDialog;
+
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
-                if let Some(path) = async_std::task::block_on(async {
-                    AsyncFileDialog::new()
-                        .set_title("Input image")
-                        .set_directory(working_dir())
-                        .add_filter(
-                            "images",
-                            &ImageFormat::all()
-                                .map(ImageFormat::extensions_str)
-                                .flatten()
-                                .collect::<Vec<&'static &'static str>>(),
-                        )
-                        .pick_file()
-                        .await
-                }) {
+                let (sender, receiver) = mpsc::channel();
+                async_std::task::block_on(async move {
+                    let _ = sender.send(
+                        AsyncFileDialog::new()
+                            .set_title("Input image")
+                            .set_directory(working_dir())
+                            .add_filter(
+                                "images",
+                                &ImageFormat::all()
+                                    .map(ImageFormat::extensions_str)
+                                    .flatten()
+                                    .collect::<Vec<&'static &'static str>>(),
+                            )
+                            .pick_file()
+                            .await,
+                    );
+                });
+                if let Some(path) = receiver.recv().unwrap_or_default() {
                     match ImageFile::try_new(&path) {
                         Ok(file) => {
                             self.files[0] = Some(file);
@@ -163,6 +167,8 @@ impl TemplateApp {
     }
     #[cfg(not(target_arch = "wasm32"))]
     fn browse(&mut self, ui: &mut egui::Ui) {
+        use rfd::FileDialog;
+
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
                 if let Some(path) = FileDialog::new()
