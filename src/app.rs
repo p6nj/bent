@@ -1,3 +1,5 @@
+use egui_notify::Toasts;
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -7,6 +9,8 @@ pub struct TemplateApp {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+    #[serde(skip)]
+    toasts: Toasts,
 }
 
 impl Default for TemplateApp {
@@ -15,6 +19,7 @@ impl Default for TemplateApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            toasts: Default::default(),
         }
     }
 }
@@ -75,9 +80,15 @@ impl eframe::App for TemplateApp {
             });
 
             ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
+
+            ui.horizontal(|ui| {
+                if ui.button("Increment").clicked() {
+                    self.value += 1.0;
+                }
+                if ui.button("Alert").clicked() {
+                    self.toasts.warning("Warning!");
+                }
+            });
 
             ui.separator();
 
@@ -91,6 +102,7 @@ impl eframe::App for TemplateApp {
                 egui::warn_if_debug_build(ui);
             });
         });
+        self.toasts.show(ctx);
     }
 }
 
