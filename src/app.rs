@@ -92,12 +92,11 @@ impl eframe::App for TemplateApp {
 
             ui.separator();
 
-            ui.add(egui::github_link_file!(
-                "https://github.com/p6nj/bent/",
-                "Source code."
-            ));
-
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                ui.add(egui::github_link_file!(
+                    "https://github.com/p6nj/bent/blob/master/",
+                    "Source code"
+                ));
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
             });
