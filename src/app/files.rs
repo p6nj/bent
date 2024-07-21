@@ -18,9 +18,9 @@ pub(super) enum ImageFileError<'a> {
 pub(super) type ImageFileResult<'a, T> = Result<T, ImageFileError<'a>>;
 
 impl ImageFile {
-    pub(super) fn try_new<'a>(path: &'a PathBuf) -> ImageFileResult<'a, Self> {
+    pub(super) fn try_new(path: &PathBuf) -> ImageFileResult<'_, Self> {
         let extension = path.extension().ok_or(ImageFileError::NoExtension)?;
-        if ImageFormat::from_path(&path).is_err() {
+        if ImageFormat::from_path(path).is_err() {
             return Err(ImageFileError::UnknownExtension(extension));
         }
         Ok(Self(path.to_path_buf()))

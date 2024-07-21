@@ -177,8 +177,7 @@ impl TemplateApp {
                     .add_filter(
                         "images",
                         &ImageFormat::all()
-                            .map(ImageFormat::extensions_str)
-                            .flatten()
+                            .flat_map(ImageFormat::extensions_str)
                             .collect::<Vec<&'static &'static str>>(),
                     )
                     .pick_file()
