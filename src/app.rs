@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 #[cfg(target_arch = "wasm32")]
 use std::{
     panic::UnwindSafe,
@@ -14,6 +14,9 @@ use files::ImageFile;
 #[cfg(target_arch = "wasm32")]
 use futures::{Future, FutureExt};
 use image::ImageFormat;
+#[cfg(target_arch = "wasm32")]
+use log::error;
+use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
@@ -55,10 +58,23 @@ impl TemplateApp {
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
         if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            debug!("found storage");
+            return eframe::get_value(storage, eframe::APP_KEY)
+                .inspect(|app| {
+                    debug!("found the app in the storage");
+                    trace!(
+                        "{}",
+                        serde_json::to_string(app)
+                            .map(Cow::Owned)
+                            .unwrap_or(Cow::Borrowed("app serialization failed"))
+                    );
+                })
+                .unwrap_or_default();
         }
 
-        Default::default()
+        let app = Default::default();
+        info!("app successfuly loaded");
+        app
     }
 }
 
@@ -66,6 +82,7 @@ impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
+        debug!("storage saved");
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
@@ -165,26 +182,35 @@ impl TemplateApp {
     fn browse(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
+                debug!("user asked to open a file");
                 TemplateApp::prompt();
                 self.input_file_asked = true;
             }
             if self.input_file_asked {
                 if let Some(result) = input_file().lock().as_ref() {
                     self.input_file_asked = false;
+                    trace!("just got the file picker result");
                     match result {
                         Ok(maybe_path) => {
+                            trace!("it performed successfuly");
                             if let Some(path) = maybe_path {
                                 match ImageFile::try_new(path) {
                                     Ok(file) => {
+                                        trace!("file is correct");
                                         self.files[0] = Some(file);
                                     }
                                     Err(e) => {
+                                        trace!("file is incorrect, reason: {e}");
                                         self.toasts.error(e.to_string());
+                                        trace!("an error toast was generated accordingly");
                                     }
                                 }
+                            } else {
+                                trace!("however, no file was picked");
                             }
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            error!("the file picker just crashed with {e:?}");
                             self.toasts.error(
                                 "The file picker just crashed! Can't have shit in Detroit!!!",
                             );
@@ -194,7 +220,7 @@ impl TemplateApp {
             }
             ui.label(
                 self.files[0]
-                    .clone()
+                    .as_ref()
                     .map(|file| file.to_string())
                     .unwrap_or_default(),
             );
@@ -220,16 +246,7 @@ impl TemplateApp {
                     .pick_file()
                     .map(|x| x.map(|file| file.file_name())),
             ),
-            Arc::<
-                egui::mutex::Mutex<
-                    std::option::Option<
-                        Result<
-                            std::option::Option<std::string::String>,
-                            Box<(dyn std::any::Any + std::marker::Send + 'static)>,
-                        >,
-                    >,
-                >,
-            >::downgrade(&input_file().clone()),
+            Arc::downgrade(input_file()),
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
