@@ -27,7 +27,7 @@ use files_wasm as files;
 use strum::{Display, EnumIter, IntoEnumIterator};
 
 #[cfg(target_arch = "wasm32")]
-type FilePickerSharedResult = Arc<Mutex<Option<thread::Result<Option<String>>>>>;
+type FilePickerSharedResult = Arc<Mutex<Option<thread::Result<Option<(String, Vec<u8>)>>>>>;
 
 #[cfg(target_arch = "wasm32")]
 fn input_file() -> &'static FilePickerSharedResult {
@@ -166,9 +166,9 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn spawn_and_collect<F: 'static + Future<Output = Option<String>> + UnwindSafe>(
+pub fn spawn_and_collect<T: 'static, F: 'static + Future<Output = Option<T>> + UnwindSafe>(
     future: F,
-    arc: Weak<Mutex<Option<thread::Result<Option<String>>>>>,
+    arc: Weak<Mutex<Option<thread::Result<Option<T>>>>>,
 ) {
     wasm_bindgen_futures::spawn_local(async move {
         let future = future.catch_unwind();
@@ -210,7 +210,7 @@ impl TemplateApp {
                     match res {
                         Ok(maybe_path) => {
                             trace!("it performed successfuly");
-                            if let Some(path) = maybe_path {
+                            if let Some((path, _)) = maybe_path {
                                 match ImageFile::try_new(path) {
                                     Ok(file) => {
                                         trace!("file is correct");
@@ -248,6 +248,7 @@ impl TemplateApp {
     fn prompt() {
         use std::panic::AssertUnwindSafe;
 
+        use futures::future::join_all;
         use rfd::AsyncFileDialog;
 
         spawn_and_collect(
@@ -262,7 +263,13 @@ impl TemplateApp {
                             .collect::<Vec<&'static &'static str>>(),
                     )
                     .pick_file()
-                    .map(|x| x.map(|file| file.file_name())),
+                    .map(|maybe_fh| {
+                        join_all(
+                            maybe_fh.map(|fh| async move { (fh.file_name(), fh.read().await) }),
+                        )
+                    })
+                    .flatten()
+                    .map(|v| v.first().cloned()),
             ),
             Arc::downgrade(input_file()),
         );
