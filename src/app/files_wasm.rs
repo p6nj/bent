@@ -1,7 +1,6 @@
 use std::{ffi::OsString, ops::Deref, path::Path};
 
 use image::ImageFormat;
-use rfd::FileHandle;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -19,14 +18,13 @@ pub(super) enum ImageFileError {
 pub(super) type ImageFileResult<T> = Result<T, ImageFileError>;
 
 impl ImageFile {
-    pub(super) fn try_new(file: &FileHandle) -> ImageFileResult<Self> {
-        let binding = file.file_name();
-        let path = Path::new(&binding);
+    pub(super) fn try_new(file: &String) -> ImageFileResult<Self> {
+        let path = Path::new(file);
         let extension = path.extension().ok_or(ImageFileError::NoExtension)?;
         if ImageFormat::from_path(path).is_err() {
             return Err(ImageFileError::UnknownExtension(extension.to_os_string()));
         }
-        Ok(Self(file.file_name()))
+        Ok(Self(file.clone()))
     }
 }
 

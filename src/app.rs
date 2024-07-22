@@ -1,15 +1,19 @@
 use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
-use std::{cell::Cell, panic::UnwindSafe, rc::Rc, thread};
+use std::{
+    panic::UnwindSafe,
+    sync::{Arc, OnceLock, Weak},
+    thread,
+};
 
 use dirs::{download_dir, home_dir, picture_dir};
+#[cfg(target_arch = "wasm32")]
+use egui::mutex::Mutex;
 use egui_notify::Toasts;
 use files::ImageFile;
 #[cfg(target_arch = "wasm32")]
 use futures::{Future, FutureExt};
 use image::ImageFormat;
-#[cfg(target_arch = "wasm32")]
-use rfd::FileHandle;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
@@ -17,6 +21,15 @@ mod files;
 mod files_wasm;
 #[cfg(target_arch = "wasm32")]
 use files_wasm as files;
+
+#[cfg(target_arch = "wasm32")]
+type FilePickerSharedResult = Arc<Mutex<Option<thread::Result<Option<String>>>>>;
+
+#[cfg(target_arch = "wasm32")]
+fn input_file() -> &'static FilePickerSharedResult {
+    static INPUT_FILE: OnceLock<FilePickerSharedResult> = OnceLock::new();
+    INPUT_FILE.get_or_init(Default::default)
+}
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(Default, Deserialize, Serialize)]
@@ -26,6 +39,10 @@ pub struct TemplateApp {
 
     #[serde(skip)]
     toasts: Toasts,
+
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    input_file_asked: bool,
 }
 
 impl TemplateApp {
@@ -127,22 +144,20 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub struct Task<T>(Rc<Cell<Option<thread::Result<T>>>>);
-
-#[cfg(target_arch = "wasm32")]
-impl<T: 'static> Task<T> {
-    pub fn spawn<F: 'static + Future<Output = T> + UnwindSafe>(future: F) -> Self {
-        let sender = Rc::new(Cell::new(None));
-        let receiver = sender.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let future = future.catch_unwind();
-            sender.set(Some(future.await));
-        });
-        Self(receiver)
-    }
-    pub fn take_output(&self) -> Option<thread::Result<T>> {
-        self.0.take()
-    }
+pub fn spawn_and_collect<F: 'static + Future<Output = Option<String>> + UnwindSafe>(
+    future: F,
+    arc: Weak<Mutex<Option<thread::Result<Option<String>>>>>,
+) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let future = future.catch_unwind();
+        future
+            .then(|result| async move {
+                if let Some(arc) = arc.upgrade() {
+                    arc.lock().replace(result);
+                }
+            })
+            .await;
+    });
 }
 
 impl TemplateApp {
@@ -150,22 +165,30 @@ impl TemplateApp {
     fn browse(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
-                match TemplateApp::prompt() {
-                    Ok(maybe_path) => {
-                        if let Some(path) = maybe_path {
-                            match ImageFile::try_new(&path) {
-                                Ok(file) => {
-                                    self.files[0] = Some(file);
-                                }
-                                Err(e) => {
-                                    self.toasts.error(e.to_string());
+                TemplateApp::prompt();
+                self.input_file_asked = true;
+            }
+            if self.input_file_asked {
+                if let Some(result) = input_file().lock().as_ref() {
+                    self.input_file_asked = false;
+                    match result {
+                        Ok(maybe_path) => {
+                            if let Some(path) = maybe_path {
+                                match ImageFile::try_new(path) {
+                                    Ok(file) => {
+                                        self.files[0] = Some(file);
+                                    }
+                                    Err(e) => {
+                                        self.toasts.error(e.to_string());
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(_) => {
-                        self.toasts
-                            .error("The file picker just crashed! Can't have shit in Detroit!!!");
+                        Err(_) => {
+                            self.toasts.error(
+                                "The file picker just crashed! Can't have shit in Detroit!!!",
+                            );
+                        }
                     }
                 }
             }
@@ -178,31 +201,36 @@ impl TemplateApp {
         });
     }
     #[cfg(target_arch = "wasm32")]
-    fn prompt() -> thread::Result<Option<FileHandle>> {
-        use std::{panic::AssertUnwindSafe, thread::sleep, time::Duration};
+    fn prompt() {
+        use std::panic::AssertUnwindSafe;
 
         use rfd::AsyncFileDialog;
 
-        let task = Task::spawn(AssertUnwindSafe(
-            AsyncFileDialog::new()
-                .set_title("Input image")
-                .set_directory(working_dir())
-                .add_filter(
-                    "images",
-                    &ImageFormat::all()
-                        .flat_map(ImageFormat::extensions_str)
-                        .collect::<Vec<&'static &'static str>>(),
-                )
-                .pick_file(),
-        ));
-        loop {
-            match task.take_output() {
-                Some(result) => {
-                    break result;
-                }
-                None => sleep(Duration::from_millis(40)),
-            }
-        }
+        spawn_and_collect(
+            AssertUnwindSafe(
+                AsyncFileDialog::new()
+                    .set_title("Input image")
+                    .set_directory(working_dir())
+                    .add_filter(
+                        "images",
+                        &ImageFormat::all()
+                            .flat_map(ImageFormat::extensions_str)
+                            .collect::<Vec<&'static &'static str>>(),
+                    )
+                    .pick_file()
+                    .map(|x| x.map(|file| file.file_name())),
+            ),
+            Arc::<
+                egui::mutex::Mutex<
+                    std::option::Option<
+                        Result<
+                            std::option::Option<std::string::String>,
+                            Box<(dyn std::any::Any + std::marker::Send + 'static)>,
+                        >,
+                    >,
+                >,
+            >::downgrade(&input_file().clone()),
+        );
     }
     #[cfg(not(target_arch = "wasm32"))]
     fn browse(&mut self, ui: &mut egui::Ui) {
