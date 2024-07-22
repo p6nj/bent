@@ -187,10 +187,14 @@ impl TemplateApp {
                 self.input_file_asked = true;
             }
             if self.input_file_asked {
-                if let Some(result) = input_file().lock().as_ref() {
+                let mut guard = input_file().lock();
+                if guard.as_ref().is_some() {
                     self.input_file_asked = false;
                     trace!("just got the file picker result");
-                    match result {
+                    match {
+                        let guard = guard.as_ref();
+                        unsafe { guard.unwrap_unchecked() }
+                    } {
                         Ok(maybe_path) => {
                             trace!("it performed successfuly");
                             if let Some(path) = maybe_path {
@@ -216,6 +220,7 @@ impl TemplateApp {
                             );
                         }
                     }
+                    guard.take();
                 }
             }
             ui.label(
