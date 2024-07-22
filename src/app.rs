@@ -8,6 +8,8 @@ use files::ImageFile;
 #[cfg(target_arch = "wasm32")]
 use futures::{Future, FutureExt};
 use image::ImageFormat;
+#[cfg(target_arch = "wasm32")]
+use rfd::FileHandle;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
@@ -146,35 +148,24 @@ impl<T: 'static> Task<T> {
 impl TemplateApp {
     #[cfg(target_arch = "wasm32")]
     fn browse(&mut self, ui: &mut egui::Ui) {
-        use std::panic::AssertUnwindSafe;
-
-        use rfd::AsyncFileDialog;
-
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
-                if let Some(path) = Task::spawn(AssertUnwindSafe(
-                    AsyncFileDialog::new()
-                        .set_title("Input image")
-                        .set_directory(working_dir())
-                        .add_filter(
-                            "images",
-                            &ImageFormat::all()
-                                .flat_map(ImageFormat::extensions_str)
-                                .collect::<Vec<&'static &'static str>>(),
-                        )
-                        .pick_file(),
-                ))
-                .take_output()
-                .unwrap()
-                .unwrap()
-                {
-                    match ImageFile::try_new(&path) {
-                        Ok(file) => {
-                            self.files[0] = Some(file);
+                match TemplateApp::prompt() {
+                    Ok(maybe_path) => {
+                        if let Some(path) = maybe_path {
+                            match ImageFile::try_new(&path) {
+                                Ok(file) => {
+                                    self.files[0] = Some(file);
+                                }
+                                Err(e) => {
+                                    self.toasts.error(e.to_string());
+                                }
+                            }
                         }
-                        Err(e) => {
-                            self.toasts.error(e.to_string());
-                        }
+                    }
+                    Err(_) => {
+                        self.toasts
+                            .error("The file picker just crashed! Can't have shit in Detroit!!!");
                     }
                 }
             }
@@ -185,6 +176,33 @@ impl TemplateApp {
                     .unwrap_or_default(),
             );
         });
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn prompt() -> thread::Result<Option<FileHandle>> {
+        use std::{panic::AssertUnwindSafe, thread::sleep, time::Duration};
+
+        use rfd::AsyncFileDialog;
+
+        let task = Task::spawn(AssertUnwindSafe(
+            AsyncFileDialog::new()
+                .set_title("Input image")
+                .set_directory(working_dir())
+                .add_filter(
+                    "images",
+                    &ImageFormat::all()
+                        .flat_map(ImageFormat::extensions_str)
+                        .collect::<Vec<&'static &'static str>>(),
+                )
+                .pick_file(),
+        ));
+        loop {
+            match task.take_output() {
+                Some(result) => {
+                    break result;
+                }
+                None => sleep(Duration::from_millis(40)),
+            }
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     fn browse(&mut self, ui: &mut egui::Ui) {
