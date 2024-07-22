@@ -1,8 +1,12 @@
 use std::path::PathBuf;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::Cell, panic::UnwindSafe, rc::Rc, thread};
 
 use dirs::{download_dir, home_dir, picture_dir};
 use egui_notify::Toasts;
 use files::ImageFile;
+#[cfg(target_arch = "wasm32")]
+use futures::{Future, FutureExt};
 use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,33 +124,50 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
     });
 }
 
+#[cfg(target_arch = "wasm32")]
+pub struct Task<T>(Rc<Cell<Option<thread::Result<T>>>>);
+
+#[cfg(target_arch = "wasm32")]
+impl<T: 'static> Task<T> {
+    pub fn spawn<F: 'static + Future<Output = T> + UnwindSafe>(future: F) -> Self {
+        let sender = Rc::new(Cell::new(None));
+        let receiver = sender.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let future = future.catch_unwind();
+            sender.set(Some(future.await));
+        });
+        Self(receiver)
+    }
+    pub fn take_output(&self) -> Option<thread::Result<T>> {
+        self.0.take()
+    }
+}
+
 impl TemplateApp {
     #[cfg(target_arch = "wasm32")]
     fn browse(&mut self, ui: &mut egui::Ui) {
-        use std::sync::mpsc;
+        use std::panic::AssertUnwindSafe;
 
         use rfd::AsyncFileDialog;
 
         ui.horizontal(|ui| {
             if ui.button("Browse").clicked() {
-                let (sender, receiver) = mpsc::channel();
-                async_std::task::block_on(async move {
-                    let _ = sender.send(
-                        AsyncFileDialog::new()
-                            .set_title("Input image")
-                            .set_directory(working_dir())
-                            .add_filter(
-                                "images",
-                                &ImageFormat::all()
-                                    .map(ImageFormat::extensions_str)
-                                    .flatten()
-                                    .collect::<Vec<&'static &'static str>>(),
-                            )
-                            .pick_file()
-                            .await,
-                    );
-                });
-                if let Some(path) = receiver.recv().unwrap_or_default() {
+                if let Some(path) = Task::spawn(AssertUnwindSafe(
+                    AsyncFileDialog::new()
+                        .set_title("Input image")
+                        .set_directory(working_dir())
+                        .add_filter(
+                            "images",
+                            &ImageFormat::all()
+                                .flat_map(ImageFormat::extensions_str)
+                                .collect::<Vec<&'static &'static str>>(),
+                        )
+                        .pick_file(),
+                ))
+                .take_output()
+                .unwrap()
+                .unwrap()
+                {
                     match ImageFile::try_new(&path) {
                         Ok(file) => {
                             self.files[0] = Some(file);

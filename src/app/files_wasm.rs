@@ -23,7 +23,7 @@ impl ImageFile {
         let binding = file.file_name();
         let path = Path::new(&binding);
         let extension = path.extension().ok_or(ImageFileError::NoExtension)?;
-        if ImageFormat::from_path(&path).is_err() {
+        if ImageFormat::from_path(path).is_err() {
             return Err(ImageFileError::UnknownExtension(extension.to_os_string()));
         }
         Ok(Self(file.file_name()))
